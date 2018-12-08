@@ -85,6 +85,9 @@ def map_intesity_to_bin(intesity_value):
     elif intesity_value <= 256:
         return 7
     
+def compute_k_means_filtering(frame):
+    pass
+
 
 def computeWeightedHistogram(img, region_boundaries):
     KERNEL_REG_TERM = 1.5
@@ -168,7 +171,6 @@ def region_extraction(img, region_boundaries):
     return sub_image
 
 
-
 def compute_region_boundaries(blob_params, reference_point):
     central_point_x = reference_point[0]
     central_point_y = reference_point[1]
@@ -198,7 +200,8 @@ def computeCentroidDistance(centroidA, centroidB):
 
 def kernel_track(roi, cap, roi_centroid):
 
-    first_frame = cap[0]
+    first_frame = compute_k_means_filtering(cap[0])
+    roi = compute_k_means_filtering(roi)
     blob_params = computeBlobParams(roi)
     probability_map = computeBackProjection(roi, first_frame)
     target_model = computeWeightedHistogram(probability_map, target_boundaries)
@@ -215,9 +218,12 @@ def kernel_track(roi, cap, roi_centroid):
     num_frame = 0
 
     for frame in cap:  
+
+        frame = compute_k_means_filtering(frame)
         probability_map = computeBackProjection(roi, frame)
         candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
         old_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
+
         while centroid_distance > epsilon: 
 
             weight_matrix = compute_weights_matrix(target_model, candidate_model, candidate_boundaries)

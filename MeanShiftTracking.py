@@ -52,18 +52,19 @@ def computeWidthHeight(img, x, y):
     a = (imgM20/imgM00)-(x**2)
     b = (imgM11/imgM00)-(x*y)
     c = (imgM02/imgM00)-(y**2)
-    l = math.sqrt(((a+c) + math.sqrt(b**2+(a-c)**2))/2)
-    w = math.sqrt(((a+c) - math.sqrt(b**2+(a-c)**2))/2)
+    l = np.sqrt(((a+c) + np.sqrt(b**2+(a-c)**2))/2)
+    w = np.sqrt(((a+c) - np.sqrt(b**2+(a-c)**2))/2)
     return l, w
 
 
-def calculateImageMoment(img, orderMomentX, orderMomentY):
+def calculateImageMoment(img_, orderMomentX, orderMomentY):
+    img =  cv2.cvtColor(img_, cv2.COLOR_BGR2GRAY)
     imgH = img.shape[0]
     imgW = img.shape[1]
     orderMoment = 0
     for row in range(0, imgH):
         for col in range(0, imgW):
-            orderMoment += (col**orderMomentX)*(row**orderMomentY)*img[row][col]
+            orderMoment += (col**orderMomentX)*(row**orderMomentY)*img[row,col]
     return orderMoment
 
 
@@ -105,7 +106,7 @@ def computeWeightedHistogram(img, region_boundaries):
             B = map_intesity_to_bin(img[i, j, 0])
             G = map_intesity_to_bin(img[i, j, 1])
             R = map_intesity_to_bin(img[i, j, 2])
-            histogram[B,G,R] = histogram[B,G,R] + (1 + weight)
+            histogram[B,G,R] += (1 + weight)
             regularization_term += weight
     histogram = 1/regularization_term * histogram 
     cv.imwrite('weight matrix.png', weight_matrix)
@@ -122,7 +123,7 @@ def compute_similarity_coefficient(hist_target, hist_candidate):
     return root_product.sum()
 
 
-def shift_mass_center(hist_target, hist_candidate, candidate_mass_center, candidate_weight_matrix, candidate_region):
+def shift_mass_center(candidate_mass_center, candidate_weight_matrix, candidate_region):
     width = candidate_= region.shape[0]
     height = candidate_region.shape[1]
     numerator = 0.0
@@ -157,17 +158,15 @@ def region_extraction(img, region_boundaries):
     to_y = region_boundaries["to_y"]
     height = abs(from_y - to_y) 
     width =  abs(from_x - to_x) 
-    sub_image = np.zeros((height,width,3), np.uint8)
-    k = 0
-    l = 0
-    for i in range(from_x, to_x):
-        l = 0
-        for j in range(from_y, to_y):
-            sub_image.itemset((l,k,0),img[j,i,0])
-            sub_image.itemset((l,k,1),img[j,i,1])
-            sub_image.itemset((l,k,2),img[j,i,2])
-            l += 1
-        k += 1
+    sub_image = np.zeros((height,width,3), int)
+    for i in range(from_y, to_y):
+        for j in range(from_x, to_x):
+            i_sub_img = abs(from_y - i)
+            j_sub_img  = abs(from_x - j)
+            sub_image[i_sub_img,j_sub_img,0] = img[i,j,0]
+            sub_image[i_sub_img,j_sub_img,1] = img[i,j,1]
+            sub_image[i_sub_img,j_sub_img,2] = img[i,j,2]
+    
     return sub_image
 
 
@@ -175,10 +174,10 @@ def compute_region_boundaries(blob_params, reference_point):
     central_point_x = reference_point[0]
     central_point_y = reference_point[1]
     region_boundaries = {
-        "from_x": abs(central_point_x - blob_params["longitude"]/2),
-        "to_x": abs(central_point_x + blob_params["longitude"]/2),
-        "from_y":  abs(central_point_y - blob_params["width"]/2),
-        "to_y" : abs(central_point_y + blob_params["width"]/2),
+        "from_x": int(abs(central_point_x - blob_params["width"])),
+        "to_x": int(abs(central_point_x + blob_params["width"])),
+        "from_y":  int(abs(central_point_y - blob_params["longitude"])),
+        "to_y" : int(abs(central_point_y + blob_params["longitude"])),
         "origin_x": central_point_x,
         "origin_y": central_point_y
     }
@@ -224,10 +223,10 @@ def kernel_track(roi, cap, roi_centroid):
         candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
         old_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
 
-        while centroid_distance > epsilon: 
+        while True: 
 
             weight_matrix = compute_weights_matrix(target_model, candidate_model, candidate_boundaries)
-            new_centroid = shift_mass_center(target_model, candidate_model, current_centroid, weight_matrix, candidate_region)
+            new_centroid = shift_mass_center(current_centroid, weight_matrix, candidate_region)
             candidate_boundaries = compute_region_boundaries(blob_params, new_centroid)
             candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
             new_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
@@ -267,21 +266,27 @@ def loadVideo(path):
 
 def computeBlobParams(roi):
     image_centroid = calculateImageCentroid(roi)
-    longitude, width = computeWidthHeight(roi,image_centroid[0], calculateImageCentroid[1])
-    orientation = computeOrientation(roi, imag_centroid[0], image_centroid[1])
+    longitude, width = computeWidthHeight(roi,image_centroid[0], image_centroid[1])
+    orientation = computeOrientation(roi, image_centroid[0], image_centroid[1])
+    MAG_EXPAC_H = 2
+    MAG_EXPAC_W = 3
     blob_params  =  {
-        "centroidX": image_centroid[0],
-        "centroidY": image_centroid[1],
-        "longitude": longitude,
-        "width": width,
-        "orientation": orientation,
+        "centroidX": int(image_centroid[0]),
+        "centroidY": int(image_centroid[1]),
+        "longitude": int(longitude) * MAG_EXPAC_H,
+        "width": int(width) * MAG_EXPAC_W,
+        "orientation": int(orientation),
     }    
     return blob_params
 
+def paint_rectangle(blob_params, frame):
+    cv2.rectangle(frame,(blob_params["from_x"],blob_params["to_y"]),(blob_params["to_x"],blob_params["from_y"]),(0,255,255), 1)
+    cv2.imshow('region', frame)
+    cv2.waitKey(0)
+
 def show_tracking_registry(cap_path, tracking_registry):
-    cap = cv2.VideoCapture('wow.avi')
     i = 0
-    while(cap.isOpened()):
+    while(i < len(tracking_registry)):
         blob_params =  tracking_registry[i]
         ret, frame = cap.read()
         cv2.rectangle(frame,(blob_params["from_x"],blob_params["to_y"]),(blob_params["to_x"],blob_params["from_y"]),(0,255,255),3)
@@ -289,18 +294,19 @@ def show_tracking_registry(cap_path, tracking_registry):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
         i += 1
+        
     cap.release()
     cv2.destroyAllWindows()
 
 
 def main():
-    cap_path = "highway_460to869.avi"
-    roi_centroid = (100,100)
-    roi = cv2.imread('')
+    cap_path = "slow.mp4"
+    roi_centroid = (13,76)
     cap = loadVideo(cap_path)
+    roi = cv2.imread('roi.png')
     tracking_registry = kernel_track(roi, cap, roi_centroid)
     show_tracking_registry(cap_path, tracking_registry)
-
+    
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ def computeBackProjection(roi, target):
     res = np.vstack((target,thresh,res))
     return res
 
+
 def calculateImageCentroid(img):
     #calculate image moments
     imgM00 = calculateImageMoment(img, 0, 0)
@@ -31,6 +32,7 @@ def calculateImageCentroid(img):
     imgCentoidCoordinatesY = imgM01/imgM00
     return (imgCentoidCoordinatesX, imgCentoidCoordinatesY)
 
+
 def computeOrientation(img,x,y):
     imgM00 = calculateImageMoment(img, 0, 0)
     imgM11 = calculateImageMoment(img, 1, 1)
@@ -40,6 +42,7 @@ def computeOrientation(img,x,y):
     res2 = np.arctan(res)
     res2 = res2/2
     return res2
+
 
 def computeWidthHeight(img, x, y):
     imgM00 = calculateImageMoment(img, 0, 0)
@@ -52,6 +55,7 @@ def computeWidthHeight(img, x, y):
     l = math.sqrt(((a+c) + math.sqrt(b**2+(a-c)**2))/2)
     w = math.sqrt(((a+c) - math.sqrt(b**2+(a-c)**2))/2)
     return l, w
+
 
 def calculateImageMoment(img, orderMomentX, orderMomentY):
     imgH = img.shape[0]
@@ -108,10 +112,12 @@ def computeWeightedHistogram(img, region_boundaries):
 def compute_gaussian_kernel(origin, pixel_spatial_position, KERNEL_REG_TERM = 0.5):
     return math.exp(- (np.linalg.norm((origin - pixel_spatial_position)/KERNEL_REG_TERM)))
 
+
 #Bhattacharyya coefficient
 def compute_similarity_coefficient(hist_target, hist_candidate):
     root_product = math.sqrt(hist_target * hist_candidate)
     return root_product.sum()
+
 
 def shift_mass_center(hist_target, hist_candidate, candidate_mass_center, candidate_weight_matrix, candidate_region):
     width = candidate_= region.shape[0]
@@ -176,11 +182,13 @@ def compute_region_boundaries(blob_params, reference_point):
     }
     return region_boundaries
 
+
 def update_mass_center(centerA, centerB):
     centerA = np.array([centerA[0], centerA[1]])
     centerB = np.array([centerB[0], centerB[1]])
     new_center = (centerA + centerB)/2
     return (new_center[0], new_center[1])
+
 
 def computeCentroidDistance(centroidA, centroidB):
     centerA = np.array([centroidA[0], centroidA[1]])
@@ -189,15 +197,15 @@ def computeCentroidDistance(centroidA, centroidB):
     
 
 def kernel_track(roi, cap, roi_centroid):
+
     first_frame = cap[0]
     blob_params = computeBlobParams(roi)
     probability_map = computeBackProjection(roi, first_frame)
-    target_boundaries = compute_region_boundaries(blob_params, roi_centroid)
     target_model = computeWeightedHistogram(probability_map, target_boundaries)
     current_centroid = roi_centroid
     candidate_boundaries = compute_region_boundaries(blob_params, current_centroid)
     candidate_region = region_extraction(probability_map, candidate_boundaries)
-    epsilon = 0.1
+    epsilon = 0.01
     print('\n-------------------------------------------------------------')
     print('\n\n-------------COMPUTING TRACKING REGISTRY-------------------')
     print('\n\n----------------------------------------------------------\n')
@@ -205,22 +213,24 @@ def kernel_track(roi, cap, roi_centroid):
     input('Press enter to continue...\n')
     tracking_registry = list()
     num_frame = 0
+
     for frame in cap:  
         probability_map = computeBackProjection(roi, frame)
-        while centroid_distance > epsilon:
-            candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
-            old_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
+        candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
+        old_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
+        while centroid_distance > epsilon: 
+
             weight_matrix = compute_weights_matrix(target_model, candidate_model, candidate_boundaries)
             new_centroid = shift_mass_center(target_model, candidate_model, current_centroid, weight_matrix, candidate_region)
-            candidate_boundaries["origin_x"] = new_centroid[0]
-            candidate_boundaries["origin_y"] = new_centroid[1]
+            candidate_boundaries = compute_region_boundaries(blob_params, new_centroid)
             candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
             new_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
            
             while new_similarity_coeff < old_similarity_coeff:
+
+                print('Updating mass center...')
                 new_centroid = update_mass_center(new_centroid, current_centroid)
-                candidate_boundaries["origin_x"] = new_centroid[0]
-                candidate_boundaries["origin_y"] = new_centroid[1]
+                candidate_boundaries = compute_region_boundaries(blob_params, new_centroid)
                 candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
                 new_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
             
@@ -232,6 +242,8 @@ def kernel_track(roi, cap, roi_centroid):
 
         num_frame += 1
         print('Frame ' , num_frame)
+        tracking_registry.append(candidate_boundaries)
+        
     print('\n\ndone.')
     return tracking_registry
 
@@ -262,11 +274,15 @@ def computeBlobParams(roi):
 
 def show_tracking_registry(cap_path, tracking_registry):
     cap = cv2.VideoCapture('wow.avi')
+    i = 0
     while(cap.isOpened()):
+        blob_params =  tracking_registry[i]
         ret, frame = cap.read()
+        cv2.rectangle(frame,(blob_params["from_x"],blob_params["to_y"]),(blob_params["to_x"],blob_params["from_y"]),(0,255,255),3)
         cv2.imshow('frame',frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+        i += 1
     cap.release()
     cv2.destroyAllWindows()
 

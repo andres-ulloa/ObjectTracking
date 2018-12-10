@@ -121,7 +121,7 @@ def binarize(img):
 def computeWeightedHistogram(img, region_boundaries):
     histogram = np.zeros((8,8 ,8), dtype = float)     
     weight_matrix = np.zeros((img.shape[0],img.shape[1]), np.float)
-    origin = np.array([int(math.ceil(region_boundaries["origin_y"])),int(math.ceil(region_boundaries["origin_x"]))])
+    origin = np.array([region_boundaries["origin_y"],region_boundaries["origin_x"]])
     regularization_term = 0.0
     for i in range(region_boundaries["from_y"], region_boundaries["to_y"]):
         for j in range(region_boundaries["from_x"], region_boundaries["to_x"]):
@@ -139,7 +139,7 @@ def computeWeightedHistogram(img, region_boundaries):
     return histogram
 
 
-def compute_gaussian_kernel(origin, pixel_spatial_position, KERNEL_REG_COEFF = 1.5):
+def compute_gaussian_kernel(origin, pixel_spatial_position, KERNEL_REG_COEFF = 3.55):
     return math.exp(- (np.linalg.norm((origin - pixel_spatial_position)/KERNEL_REG_COEFF)))
 
 
@@ -163,6 +163,7 @@ def map_rgb_to_greyscale(RGB_value):
     return (0.3 * B) + (0.6 * G) + (0.11 * R)
 
 def shift_mass_center(candidate_mass_center, candidate_weight_matrix, region_boundaries):
+
     from_x = region_boundaries["from_x"]
     to_x = region_boundaries["to_x"]
     from_y = region_boundaries["from_y"]
@@ -171,18 +172,21 @@ def shift_mass_center(candidate_mass_center, candidate_weight_matrix, region_bou
     shift_x = 0.0
     shift_y = 0.0
     origin = np.array([candidate_mass_center[1],candidate_mass_center[0]])
+
     for i in range(from_y, to_y):
         for j in range(from_x, to_x):
+
             i_sub_img = abs(from_y - i)
             j_sub_img  = abs(from_x - j)
             pixel_spatial_position = np.array([i, j])
-            shift_x += i * candidate_weight_matrix[i_sub_img,j_sub_img] * compute_gaussian_kernel(origin, pixel_spatial_position)
-            shift_y += j * candidate_weight_matrix[i_sub_img,j_sub_img] * compute_gaussian_kernel(origin, pixel_spatial_position)
-            denominator += candidate_weight_matrix[i_sub_img,j_sub_img] * compute_gaussian_kernel(origin, pixel_spatial_position)
+            shift_x += j  * compute_gaussian_kernel(origin, pixel_spatial_position)
+            shift_y += i  *  compute_gaussian_kernel(origin, pixel_spatial_position)
+            denominator +=  compute_gaussian_kernel(origin, pixel_spatial_position)
 
-    shift_x = shift_x/denominator
-    shift_y = shift_y/denominator
-    return (shift_y, shift_x)
+    shift_x = (shift_x/denominator)
+    shift_y = (shift_y/denominator)
+    print('shift_x and shift_y = ', shift_x, shift_y)
+    return (shift_x, shift_y)
 
 
 def compute_weights_matrix(hist_target, hist_candidate, candidate_boundaries, candidate_region):
@@ -225,7 +229,7 @@ def region_extraction(img, region_boundaries):
     return sub_image
 
 
-def compute_region_boundaries(blob_params, reference_point):
+def compute_region_boundaries(blob_params, reference_point, img):
     central_point_x = reference_point[0]
     central_point_y = reference_point[1]
     MAG_EXPAC_N = 2.5
@@ -237,13 +241,15 @@ def compute_region_boundaries(blob_params, reference_point):
         "to_x": int(abs(central_point_x + (blob_params["width"]* MAG_EXPAC_E))),
         "from_y":  int(abs(central_point_y - (blob_params["longitude"] * MAG_EXPAC_N))),
         "to_y" : int(abs(central_point_y + (blob_params["longitude"] * MAG_EXPAC_S))),
-        "origin_x": int(math.ceil(central_point_x)),
-        "origin_y": int(math.ceil(central_point_y))
+        "origin_x": int(central_point_x),
+        "origin_y": int(central_point_y),
+        "img_w": img.shape[0],
+        "img_h": img.shape[1]
     }
     return region_boundaries
 
 
-def update_mass_center(centerA, centerB):
+def get_mean_centroid(centerA, centerB):
     centerA = np.array([centerA[0], centerA[1]])
     centerB = np.array([centerB[0], centerB[1]])
     new_center = (centerA + centerB)/2
@@ -257,15 +263,14 @@ def computeCentroidDistance(centroidA, centroidB):
     
 
 def kernel_track(roi, cap, roi_centroid):
-
-    first_frame =  compute_k_means_filtering(cap[0])
+    
+    frame =  compute_k_means_filtering(cap[0])
     blob_params = computeBlobParams(roi)
-    target_boundaries = compute_region_boundaries(blob_params, roi_centroid)
-    probability_map = computeBackProjection(roi, first_frame)
-    cv2.imwrite('initial_p-map.png', probability_map)
+    probability_map = computeBackProjection(roi, frame)
+    target_boundaries = compute_region_boundaries(blob_params, roi_centroid, probability_map)
     target_model = computeWeightedHistogram(probability_map, target_boundaries)
-    candidate_boundaries = compute_region_boundaries(blob_params, current_centroid)
     current_centroid = roi_centroid
+    candidate_boundaries = compute_region_boundaries(blob_params, current_centroid, probability_map)
     epsilon = 0.09
     print('\n-------------------------------------------------------------')
     print('\n\n-------------COMPUTING TRACKING REGISTRY-------------------')
@@ -274,46 +279,48 @@ def kernel_track(roi, cap, roi_centroid):
     input('Press enter to continue...\n')
     tracking_registry = list()
 
-    for i in range(299, 300):  
-
-        frame = compute_k_means_filtering(cap[i])
+    for i in range(0, len(cap)):  
+        if i != 0:
+            frame = compute_k_means_filtering(cap[i])
         probability_map = computeBackProjection(roi, frame)
-        cv2.imwrite('initial_p-map.png', probability_map)
-        cv2.imwrite('frame.png', frame)
         print('Starting candidate boundaries = ', candidate_boundaries)
         candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
         old_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
-        
+        print('\n\nNEW FRAME')
+
         while True: 
 
             print('\n\nNEW ATTEMPT')
+            print('Frame ' , i)
             candidate_region = region_extraction(probability_map, candidate_boundaries)
             weight_matrix = compute_weights_matrix(target_model, candidate_model, candidate_boundaries, candidate_region)
             new_centroid = shift_mass_center(current_centroid, weight_matrix, candidate_boundaries)
-            print('NEW CENTROID = ', new_centroid, "ORIGINAL_CENTROID = ", current_centroid)
             candidate_boundaries = update_region_boundaries(candidate_boundaries, new_centroid)
+            print('NEW CENTROID (float) = ', new_centroid, "NEW_CENTROID (discrete gradient) = ", (candidate_boundaries["origin_x"] , candidate_boundaries["origin_y"]) , "PREVIOUS_CENTROID = ", current_centroid, 'ORIGINAL_CENTROID = ', roi_centroid)
             print('New boundaries = ', candidate_boundaries)
             candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
             new_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
             print('NSC = ', new_similarity_coeff, ' vs OSC = ', old_similarity_coeff)
-
-            while new_similarity_coeff < old_similarity_coeff:
+           
+           
+            while old_similarity_coeff - new_similarity_coeff > 0.05:
 
                 print('\n')
-                new_centroid = update_mass_center(new_centroid, current_centroid)
-                print('updating center = ', new_centroid)
+                new_centroid = get_mean_centroid(new_centroid, current_centroid)
                 candidate_boundaries = update_region_boundaries(candidate_boundaries, new_centroid)
+                print('updating center = ', new_centroid)
                 candidate_model = computeWeightedHistogram(probability_map, candidate_boundaries)
                 new_similarity_coeff = compute_similarity_coefficient(target_model, candidate_model)
                 print('NSC = ', new_similarity_coeff, ' vs OSC = ', old_similarity_coeff)
                 print('Frame ' , i)
                 print('current candidate boundaries = ' , candidate_boundaries)
                 print('\n')
+                
 
             centroid_distance = computeCentroidDistance(new_centroid, current_centroid)
             print('centroid distance = ', centroid_distance)
-            if centroid_distance < epsilon:
-                break
+            if centroid_distance <= epsilon:
+                    break
             else:
                 current_centroid = new_centroid
 
@@ -324,16 +331,52 @@ def kernel_track(roi, cap, roi_centroid):
     return tracking_registry
 
 
+
 def update_region_boundaries(region_boundaries, new_ref_point):
-    first_derivative_x = abs(int(math.ceil(new_ref_point[0])) - region_boundaries["origin_x"]) 
-    first_derivative_y = abs(int(math.ceil(new_ref_point[1])) - region_boundaries["origin_y"] )
+    
+    
+    def get_gradient_direction(gradient):
+        if gradient > 0:
+            return 1
+        elif gradient < 0:
+            return -1
+        else:
+            return 0
+
+    def check_boundaries_x(boundary):
+        if boundary < 0: 
+            return 0
+        elif boundary >= region_boundaries["img_w"]:
+            return region_boundaries["img_w"] - 1
+        else:
+            return boundary
+
+    def check_boundaries_y(boundary):
+        if boundary < 0: 
+            return 0
+        elif boundary >= region_boundaries["img_h"]:
+            return region_boundaries["img_h"] - 1
+        else:
+            return boundary
+
+
+    gradient_x = (new_ref_point[0] - region_boundaries["origin_x"])
+    gradient_y = (new_ref_point[1] - region_boundaries["origin_y"])
+
+    norm_gradient_x = get_gradient_direction(gradient_x) 
+    norm_gradient_y = get_gradient_direction(gradient_y)
+    print('GRADIENTS = ', norm_gradient_x, norm_gradient_y)
+
+
     new_region_boundaries = {
-        "from_x":  region_boundaries["from_x"] + origin_x,
-        "to_x":  region_boundaries["to_x"] + origin_x,
-        "from_y":  region_boundaries["from_y"] + origin_y,
-        "to_y" :region_boundaries["to_y"] + origin_y,
-        "origin_x": region_boundaries["origin_x"] + first_derivative_x,
-        "origin_y": region_boundaries["origin_y"] + first_derivative_y
+        "from_x":  check_boundaries_x(int(round(region_boundaries["from_x"] + gradient_x))),
+        "to_x":  check_boundaries_x(int(round(region_boundaries["to_x"] + gradient_x))),
+        "from_y":  check_boundaries_y(int(round(region_boundaries["from_y"] + gradient_y))),
+        "to_y" : check_boundaries_y(int(round(region_boundaries["to_y"] + gradient_y))),
+        "origin_x": check_boundaries_x(int(round(region_boundaries["origin_x"] + gradient_x))),
+        "origin_y": check_boundaries_y(int(round(region_boundaries["origin_y"] + gradient_y))),
+        "img_w": region_boundaries["img_w"],
+        "img_h": region_boundaries["img_h"]
     }
     return new_region_boundaries
   
@@ -362,10 +405,12 @@ def computeBlobParams(roi):
     }    
     return blob_params
 
+
 def paint_rectangle(blob_params, frame):
     cv2.rectangle(frame,(blob_params["from_x"],blob_params["to_y"]),(blob_params["to_x"],blob_params["from_y"]),(0,255,255), 1)
     cv2.imshow('region', frame)
     cv2.waitKey(0)
+
 
 def show_tracking_registry(cap_path, tracking_registry):
     i = 0
@@ -391,7 +436,7 @@ def main():
     roi = cv2.imread('roi.png')
     tracking_registry = kernel_track(roi, cap, roi_centroid)
     input('Press enter to continue...')
-    #show_tracking_registry(cap_path, tracking_registry)
+    show_tracking_registry(cap_path, tracking_registry)
     
 
 

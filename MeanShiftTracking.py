@@ -12,24 +12,16 @@ def computeBackProjection(roi, target):
     ranges = [0,256,0,256,0,256]
     bgrhist = cv2.calcHist([roi],channels, None, binsBGR, ranges )
     cv2.normalize(roihist,roihist,0,255,cv2.NORM_MINMAX)
-    dst = cv2.calcBackProject([target],[0,1],roihist,[0,180,0,256],1)
+    probability_map = cv2.calcBackProject([target],[0,1],roihist,[0,180,0,256],1)
     disc = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(5,5))
-    cv2.filter2D(dst,-1,disc,dst)
-    """
-    ret,thresh = cv2.threshold(dst,50,255,0)
-    thresh = cv2.merge((thresh,thresh,thresh))
-    res = cv2.bitwise_and(target,thresh)
-    res = np.vstack((target,thresh,res))
-    """
-    return dst
+    cv2.filter2D(probability_map,-1,disc,probability_map)
+    return probability_map
 
 
 def calculateImageCentroid(img):
-    #calculate image moments
     imgM00 = calculateImageMoment(img, 0, 0)
     imgM10 = calculateImageMoment(img, 1, 0)
     imgM01 = calculateImageMoment(img, 0, 1)
-    #calculate image centroid coordinates
     imgCentoidCoordinatesX = imgM10/imgM00
     imgCentoidCoordinatesY = imgM01/imgM00
     return (imgCentoidCoordinatesX, imgCentoidCoordinatesY)
@@ -88,6 +80,7 @@ def map_intesity_to_bin(intesity_value):
     elif intesity_value <= 256:
         return 7
     
+
 def compute_k_means_filtering(img):
     Z = img.reshape((-1,3))
     # convert to np.float32
@@ -95,7 +88,7 @@ def compute_k_means_filtering(img):
     # define criteria, number of clusters(K) and apply kmeans()
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
     K = 15
-    ret,label,center=cv2.kmeans(Z,K,None,criteria,10,cv2.KMEANS_RANDOM_CENTERS)
+    ret,label,center = cv2.kmeans(Z,K,None,criteria,10,cv2.KMEANS_RANDOM_CENTERS)
     # Now convert back into uint8, and make original image
     center = np.uint8(center)
     res = center[label.flatten()]
@@ -119,6 +112,7 @@ def binarize(img):
             else:
                 img[i,j] = 0
     return img
+
 
 def computeWeightedHistogram(img, region_boundaries):
 
@@ -248,17 +242,18 @@ def compute_region_boundaries(blob_params, reference_point, img):
 
     central_point_x = reference_point[0]
     central_point_y = reference_point[1]
-    MAG_EXPAC_N = 2.5
-    MAG_EXPAC_S = 2
-    MAG_EXPAC_E = 2.5
-    MAG_EXPAC_W = 2
-
+    MAG_EXPAC = 0
+    if img.shape[1] == 256:
+        MAG_EXPAC = 2
+    elif img.shape[1] == 426:
+        MAG_EXPAC = 3
+    
     region_boundaries = {
 
-        "from_x": int(abs(central_point_x - (blob_params["width"] * MAG_EXPAC_W))),
-        "to_x": int(abs(central_point_x + (blob_params["width"]* MAG_EXPAC_E))),
-        "from_y":  int(abs(central_point_y - (blob_params["longitude"] * MAG_EXPAC_N))),
-        "to_y" : int(abs(central_point_y + (blob_params["longitude"] * MAG_EXPAC_S))),
+        "from_x": int(abs(central_point_x - (blob_params["width"] * MAG_EXPAC))),
+        "to_x": int(abs(central_point_x + (blob_params["width"]* MAG_EXPAC))),
+        "from_y":  int(abs(central_point_y - (blob_params["longitude"] * MAG_EXPAC))),
+        "to_y" : int(abs(central_point_y + (blob_params["longitude"] * MAG_EXPAC))),
         "origin_x": int(central_point_x),
         "origin_y": int(central_point_y),
         "img_w": img.shape[1],
@@ -387,7 +382,6 @@ def update_region_boundaries(region_boundaries, new_ref_point):
     norm_gradient_y = get_gradient_direction(gradient_y)
     print('GRADIENTS = ', norm_gradient_x, norm_gradient_y)
 
-
     new_region_boundaries = {
         "from_x":  check_boundaries_x(int(round(region_boundaries["from_x"] + gradient_x))),
         "to_x":  check_boundaries_x(int(round(region_boundaries["to_x"] + gradient_x))),
@@ -433,24 +427,25 @@ def paint_rectangle(blob_params, frame):
 
 
 def show_tracking_registry(cap_path, tracking_registry):
-    i = 0
     cap = cv2.VideoCapture(cap_path)
-    video_length = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    video_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    MOVEMENT_STARTS_AT = 0
     for i in range(0, video_length - 1):
-        blob_params =  tracking_registry[i]
         ret, frame = cap.read()
-        cv2.rectangle(frame,(blob_params["from_x"],blob_params["to_y"]),(blob_params["to_x"],blob_params["from_y"]),(0,255,255),3)
-        cv2.imshow('frame',frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-       
+        if i >= MOVEMENT_STARTS_AT:
+            blob_params =  tracking_registry[i - MOVEMENT_STARTS_AT]
+            cv2.rectangle(frame,(blob_params["from_x"],blob_params["to_y"]),(blob_params["to_x"],blob_params["from_y"]),(0,255,255),1)
+            cv2.imshow('frame',frame)
+            if cv2.waitKey(60) & 0xFF == ord('q'):
+                break 
         
     cap.release()
     cv2.destroyAllWindows()
 
 
-def cv_mean_shift_track(roi, cap_path, roi_centroid):
+def opencv_meanshift_track(roi, cap_path, roi_centroid):
 
+    cv2.imwrite('f_roi.png',roi)
     cap = cv2.VideoCapture(cap_path)
     hsv_roi =  cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv_roi, np.array((0., 60.,32.)), np.array((180.,255.,255.)))
@@ -467,8 +462,9 @@ def cv_mean_shift_track(roi, cap_path, roi_centroid):
     candidate_boundaries = compute_region_boundaries(blob_params, roi_centroid, frame)
     target_boundaries = compute_region_boundaries(blob_params, roi_centroid, frame)
     track_window = (target_boundaries["origin_x"], target_boundaries["origin_y"], blob_params["width"], blob_params["longitude"])
-    video_length = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-    MOVEMENT_STARTS_AT = 60
+    video_length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    MOVEMENT_STARTS_AT = 0
+    tracking_registry = list()
 
     for i in range(0, video_length - 1):
 
@@ -477,23 +473,24 @@ def cv_mean_shift_track(roi, cap_path, roi_centroid):
 
             frame = compute_k_means_filtering(frame)
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            dst = computeBackProjection(roi, frame)
-            #dst = cv2.calcBackProject([hsv],[0],roi_hist,[0,180],1)
-            #dst = cv2.cvtColor(dst, cv2.COLOR_BGR2HSV)
-            ret, track_window = cv2.meanShift(dst, track_window, term_crit)
+            probability_map = computeBackProjection(roi, frame)
+            ret, track_window = cv2.meanShift(probability_map, track_window, term_crit)
             x,y,w,h = track_window
             print('PROPOSED CENTER = ', (x,y))
             candidate_boundaries =  update_region_boundaries(candidate_boundaries, (x , y))
+            tracking_registry.append(candidate_boundaries)
             print(candidate_boundaries)
             img2 = cv2.rectangle(frame,(candidate_boundaries["from_x"], candidate_boundaries["to_y"]),(candidate_boundaries["to_x"], candidate_boundaries["from_y"]),(0,255,255),1)
             cv2.imshow('img',img2)
-            cv2.imshow('prob',dst)
-            k = cv2.waitKey(1) & 0xff
+            cv2.imshow('probability_map', probability_map)
+            k = cv2.waitKey(50) & 0xff
             if k == 27:
                 break
-        
+            
+
     cv2.destroyAllWindows()
     cap.release()
+    return tracking_registry
 
 
 def cutImageSpace(img, from_y, to_y, from_x, to_x):
@@ -517,14 +514,15 @@ def cutImageSpace(img, from_y, to_y, from_x, to_x):
 def main():
 
     cap_path = "slowball.mp4"
-    cap = loadVideo(cap_path)
-    roi_centroid = (45,51)
-    roi = cv2.imread('roi.png')
-    cv_mean_shift_track(roi, cap_path, roi_centroid)
-    
-    """tracking_registry = kernel_track(roi, cap, roi_centroid)
+    #roi_centroid = (78,48)
+    #roi_centroid = (121,80)
+    roi_centroid = (21,49)
+    roi = cv2.imread('roi-cartoon.png')
+    tracking_registry = opencv_meanshift_track(roi, cap_path, roi_centroid)
     input('Press enter to continue...')
     show_tracking_registry(cap_path, tracking_registry)
+    """
+    tracking_registry = kernel_track(roi, cap, roi_centroid)
     """
 
 
